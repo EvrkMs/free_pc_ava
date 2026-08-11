@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Свободные ПК</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        color-scheme: dark;
+        --bg: #06070a;
+        --panel: #0d0f17;
+        --panel-2: #12141e;
+        --border: #1e2233;
+        --border-soft: #171a27;
+
+        --free: #34f0a4;
+        --free-glow: rgba(52, 240, 164, .35);
+        --busy: #ff4d6d;
+        --busy-glow: rgba(255, 77, 109, .4);
+        --tech: #ffb020;
+        --tech-glow: rgba(255, 176, 32, .3);
+        --dim: #545b70;
+
+        --accent: #4fd6ff;
+        --accent-glow: rgba(79, 214, 255, .45);
+
+        --text: #e8ecf6;
+        --text-dim: #7d8399;
+
+        --font-display: 'Chakra Petch', sans-serif;
+        --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+        min-height: 100%;
+    }
+
+    body {
+        margin: 0;
+        padding: 40px 16px;
+        background:
+            radial-gradient(720px 420px at 50% -8%, rgba(79, 214, 255, .10), transparent 60%),
+            repeating-linear-gradient(0deg, var(--bg) 0px, var(--bg) 31px, #0a0c12 32px),
+            var(--bg);
+        color: var(--text);
+        font-family: var(--font-mono);
+        display: flex;
+        justify-content: center;
+    }
+
+    .widget {
+        width: 100%;
+        max-width: 560px;
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        padding: 26px 26px 20px;
+        box-shadow:
+            0 0 0 1px rgba(255, 255, 255, .02) inset,
+            0 30px 70px rgba(0, 0, 0, .55),
+            0 0 60px -20px var(--accent-glow);
+        position: relative;
+        overflow: hidden;
+        animation: widget-in .5s cubic-bezier(.16, 1, .3, 1) both;
+    }
+
+    .widget::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(115deg, rgba(79, 214, 255, .06), transparent 40%);
+        pointer-events: none;
+    }
+
+    @keyframes widget-in {
+        from { opacity: 0; transform: translateY(10px) scale(.98); }
+        to { opacity: 1; transform: none; }
+    }
+
+    .top-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 18px;
+    }
+
+    .live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        letter-spacing: .12em;
+        color: var(--accent);
+        text-transform: uppercase;
+    }
+
+    .live-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 10px 1px var(--accent-glow);
+        animation: blink 1.8s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: .35; }
+    }
+
+    .updated {
+        font-size: 11px;
+        color: var(--text-dim);
+        letter-spacing: .02em;
+    }
+
+    .club-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 27px;
+        letter-spacing: .02em;
+        text-transform: uppercase;
+        margin: 0;
+        text-shadow: 0 0 22px var(--accent-glow);
+    }
+
+    .subtitle {
+        font-size: 11px;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin: 3px 0 20px;
+    }
+
+    .stat-row {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .stat-free {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 46px;
+        line-height: 1;
+        color: var(--free);
+        text-shadow: 0 0 26px var(--free-glow);
+    }
+
+    .stat-total {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 18px;
+        color: var(--text-dim);
+    }
+
+    .stat-label {
+        font-size: 11px;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin-left: auto;
+    }
+
+    .bar {
+        height: 6px;
+        border-radius: 4px;
+        background: var(--border-soft);
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+
+    .bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, var(--accent), var(--free));
+        box-shadow: 0 0 12px var(--free-glow);
+        transition: width .6s cubic-bezier(.16, 1, .3, 1);
+    }
+
+    .zone-section { margin-bottom: 20px; }
+    .zone-section:last-child { margin-bottom: 4px; }
+
+    .zone-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin: 0 0 9px;
+    }
+
+    .zone-title::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--border), transparent);
+    }
+
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+        gap: 8px;
+    }
+
+    .pc {
+        --glow: var(--dim);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 11px 8px 9px;
+        text-align: center;
+        background: var(--panel-2);
+        animation: tile-in .38s cubic-bezier(.16, 1, .3, 1) both;
+        transition: transform .15s ease, box-shadow .3s ease;
+    }
+
+    .pc:hover { transform: translateY(-2px); }
+
+    @keyframes tile-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: none; }
+    }
+
+    .pc.free {
+        border-color: color-mix(in srgb, var(--free) 45%, var(--border));
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--free) 20%, transparent) inset, 0 0 16px -6px var(--free-glow);
+    }
+    .pc.busy {
+        border-color: color-mix(in srgb, var(--busy) 55%, var(--border));
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--busy) 25%, transparent) inset, 0 0 16px -6px var(--busy-glow);
+        animation: tile-in .38s cubic-bezier(.16, 1, .3, 1) both, pulse-busy 2.6s ease-in-out infinite .38s;
+    }
+    .pc.technical {
+        border-color: color-mix(in srgb, var(--tech) 55%, var(--border));
+        border-style: dashed;
+    }
+    .pc.offline, .pc.unknown {
+        opacity: .45;
+    }
+
+    @keyframes pulse-busy {
+        0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--busy) 25%, transparent) inset, 0 0 14px -6px var(--busy-glow); }
+        50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--busy) 40%, transparent) inset, 0 0 22px -4px var(--busy-glow); }
+    }
+
+    .pc-name {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 15px;
+        letter-spacing: .01em;
+        margin-bottom: 4px;
+    }
+
+    .pc-state {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        font-variant-numeric: tabular-nums;
+        color: var(--dim);
+        line-height: 1.3;
+    }
+    .pc.free .pc-state { color: var(--free); }
+    .pc.busy .pc-state { color: var(--busy); }
+    .pc.technical .pc-state { color: var(--tech); }
+
+    .banner {
+        font-size: 12px;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 16px;
+        border: 1px solid;
+    }
+    .banner.warning {
+        color: var(--tech);
+        border-color: color-mix(in srgb, var(--tech) 40%, transparent);
+        background: color-mix(in srgb, var(--tech) 8%, transparent);
+    }
+    .banner.error {
+        color: var(--busy);
+        border-color: color-mix(in srgb, var(--busy) 40%, transparent);
+        background: color-mix(in srgb, var(--busy) 8%, transparent);
+    }
+
+    .legend {
+        margin-top: 18px;
+        font-size: 10.5px;
+        letter-spacing: .04em;
+        color: var(--text-dim);
+        text-align: center;
+    }
+</style>
+</head>
+<body>
+    <div class="widget">
+        <div class="top-row">
+            <span class="live"><span class="live-dot"></span>Live</span>
+            <span class="updated" id="updated">—</span>
+        </div>
+
+        <h1 class="club-name" id="club-name">Клуб</h1>
+        <div class="subtitle">Свободные ПК</div>
+
+        <div id="banners"></div>
+
+        <div id="stats" style="display:none">
+            <div class="stat-row">
+                <span class="stat-free" id="stat-free">0</span>
+                <span class="stat-total" id="stat-total">/ 0</span>
+                <span class="stat-label">свободно</span>
+            </div>
+            <div class="bar"><div class="bar-fill" id="bar-fill" style="width:0%"></div></div>
+        </div>
+
+        <div id="zones"></div>
+
+        <div class="legend">Обновляется каждые 15 секунд</div>
+    </div>
+
+<script>
+const STATE_LABEL = {
+    free: 'свободен',
+    technical: 'техобслуживание',
+    offline: 'нет связи',
+    unknown: 'нет данных',
+};
+
+// Порядок отображения зон; всё, чего нет в списке, идёт следом в порядке появления.
+const ZONE_ORDER = ['Стандарт', 'VIP', 'Эксклюзив', 'Приставки'];
+
+// Данные с сервера обновляются раз в 15 секунд, но "осталось N минут" тикает
+// каждую секунду прямо в браузере — от endsAt ("ЧЧ:ММ") до текущего момента.
+// Заодно это переживает временную недоступность сервера: пока не пришли
+// свежие данные, страница продолжает считать по последним известным endsAt,
+// а не молча показывает ошибку вместо сетки.
+let lastData = null;      // { club, pcs, ok, error, updatedAt }
+let serverUnreachable = false;
+let stateEls = new Map(); // uuid -> { pc, el }
+
+/** "ЧЧ:ММ" -> ближайший в будущем Date с этим временем (учитывает переход через полночь). */
+function parseEndsAt(hhmm, now) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '');
+    if (!m) return null;
+    const target = new Date(now);
+    target.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    if (target.getTime() - now.getTime() < -60 * 60 * 1000) {
+        target.setDate(target.getDate() + 1);
+    }
+    return target;
+}
+
+function formatState(pc, now) {
+    if (pc.status !== 'busy') return STATE_LABEL[pc.status] || pc.status;
+
+    const target = parseEndsAt(pc.endsAt, now);
+    if (!target) return 'занят';
+
+    const minutes = Math.max(0, Math.round((target.getTime() - now.getTime()) / 60000));
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const left = h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+    return `ещё ${left} · до ${pc.endsAt}`;
+}
+
+function groupByZone(pcs) {
+    const groups = new Map();
+    for (const pc of pcs) {
+        const zone = pc.zone || 'Другое';
+        if (!groups.has(zone)) groups.set(zone, []);
+        groups.get(zone).push(pc);
+    }
+    return [...groups.entries()].sort((a, b) => {
+        const ia = ZONE_ORDER.indexOf(a[0]);
+        const ib = ZONE_ORDER.indexOf(b[0]);
+        if (ia === -1 && ib === -1) return 0;
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+    });
+}
+
+/** Полная перестройка сетки — только когда реально пришли новые данные (не каждую секунду). */
+function renderZones(pcs, now) {
+    const container = document.getElementById('zones');
+    container.innerHTML = '';
+    stateEls = new Map();
+
+    let delay = 0;
+    for (const [zone, zonePcs] of groupByZone(pcs)) {
+        const section = document.createElement('div');
+        section.className = 'zone-section';
+        section.innerHTML = `<div class="zone-title">${zone}</div>`;
+
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+
+        for (const pc of zonePcs) {
+            const el = document.createElement('div');
+            el.className = `pc ${pc.status}`;
+            el.style.animationDelay = `${delay}ms`;
+            delay += 22;
+
+            const stateEl = document.createElement('div');
+            stateEl.className = 'pc-state';
+            stateEl.textContent = formatState(pc, now);
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'pc-name';
+            nameEl.textContent = pc.name;
+
+            el.appendChild(nameEl);
+            el.appendChild(stateEl);
+            grid.appendChild(el);
+
+            if (pc.status === 'busy') stateEls.set(pc.uuid, { pc, el: stateEl });
+        }
+
+        section.appendChild(grid);
+        container.appendChild(section);
+    }
+}
+
+function renderBanners() {
+    const container = document.getElementById('banners');
+    container.innerHTML = '';
+
+    if (!lastData || !lastData.pcs || lastData.pcs.length === 0) {
+        const el = document.createElement('div');
+        el.className = 'banner error';
+        el.textContent = (lastData && lastData.error) || 'Не удалось получить статус';
+        container.appendChild(el);
+        return;
+    }
+
+    if (serverUnreachable) {
+        const el = document.createElement('div');
+        el.className = 'banner warning';
+        el.textContent = 'Сервер не отвечает — показано последнее известное состояние';
+        container.appendChild(el);
+    } else if (!lastData.ok) {
+        const el = document.createElement('div');
+        el.className = 'banner warning';
+        el.textContent = 'Данные могут быть устаревшими: ' + (lastData.error || 'ошибка обновления');
+        container.appendChild(el);
+    }
+}
+
+/** Структурная перерисовка — вызывается только когда приходят новые данные с сервера. */
+function renderFull() {
+    renderBanners();
+
+    document.getElementById('stats').style.display = lastData && lastData.pcs && lastData.pcs.length ? '' : 'none';
+    if (!lastData || !lastData.pcs || lastData.pcs.length === 0) {
+        document.getElementById('zones').innerHTML = '';
+        return;
+    }
+
+    const now = new Date();
+
+    document.getElementById('club-name').textContent = lastData.club || 'Свободные ПК';
+
+    const total = lastData.pcs.length;
+    const freeCount = lastData.pcs.filter((pc) => pc.status === 'free').length;
+    document.getElementById('stat-free').textContent = freeCount;
+    document.getElementById('stat-total').textContent = `/ ${total}`;
+    document.getElementById('bar-fill').style.width = `${total ? (freeCount / total) * 100 : 0}%`;
+
+    renderZones(lastData.pcs, now);
+
+    const updatedAt = lastData.updatedAt ? new Date(lastData.updatedAt) : now;
+    document.getElementById('updated').textContent = updatedAt.toLocaleTimeString('ru-RU');
+}
+
+/** Обновление отсчёта на уже отрисованных плитках — вызывается каждую секунду, без сети и пересборки DOM. */
+function tick() {
+    const now = new Date();
+    for (const { pc, el } of stateEls.values()) {
+        el.textContent = formatState(pc, now);
+    }
+}
+
+/** Забирает свежие данные с сервера — вызывается раз в 15 секунд. */
+async function fetchStatus() {
+    try {
+        const res = await fetch('/api/status');
+        lastData = await res.json();
+        serverUnreachable = false;
+    } catch (e) {
+        // Сервер недоступен целиком (не 502 с телом, а сеть/процесс упали) —
+        // lastData не трогаем, чтобы не терять последнее известное состояние.
+        serverUnreachable = true;
+    }
+    renderFull();
+}
+
+fetchStatus();
+setInterval(fetchStatus, 15000);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

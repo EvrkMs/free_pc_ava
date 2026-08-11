@@ -3,65 +3,62 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+const auth = require('./langame/auth');
+const pcStatus = require('./langame/pcStatus');
+
 const PORT = 3000;
 const CACHE_TTL = 15000; // 15 секунд кеша
-let cache = { data: null, expires: 0 };
 
-const MAPCLUB_URL = 'https://mapclub.langame.ru/proxy';
+// club/pcs — последнее известное состояние (переживает неудачные обновления,
+// чтобы страница показывала последнее известное состояние, а не падала целиком).
+// ok/error/updatedAt отражают РЕЗУЛЬТАТ ПОСЛЕДНЕЙ попытки, поэтому клиент
+// всегда может отличить свежие данные от устаревших после серии ошибок.
+//
+// Публичный виджет на Cloudflare Worker (см. worker/) сам стучится сюда через
+// Cloudflare VPC-туннель (ru-ava.local) на каждый запрос гостя — этому серверу
+// самому никуда ничего пушить не нужно, он просто отвечает на /api/status.
+let cache = { club: null, pcs: null, ok: false, error: null, updatedAt: null };
 
-const server = http.createServer(async (req, res) => {
-    // CORS и заголовки
+function refresh() {
+    try {
+        const { club, pcs } = pcStatus.getStatus();
+        cache = { club, pcs, ok: true, error: null, updatedAt: Date.now() };
+    } catch (e) {
+        console.error('Не удалось обновить статус ПК:', e.message);
+        cache = { ...cache, ok: false, error: e.message };
+    }
+}
+
+const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (req.url === '/api/status') {
-        if (Date.now() < cache.expires && cache.data) {
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify(cache.data));
+        res.setHeader('Content-Type', 'application/json');
+        if (cache.pcs) {
+            return res.end(JSON.stringify(cache));
         }
-
-        try {
-            const headers = {
-                'X-Request-token': process.env.MAPCLUB_TOKEN,
-                'Content-Type': 'application/x-www-form-urlencoded',
-            };
-            const body = (type) => `type=${type}&domain=${process.env.MAPCLUB_DOMAIN}`;
-
-            const [statusRes, schemaRes] = await Promise.all([
-                fetch(MAPCLUB_URL, { method: 'POST', headers, body: body('pcStatus') }),
-                fetch(MAPCLUB_URL, { method: 'POST', headers, body: body('clubSchema') }),
-            ]);
-
-            const [statusData, schemaData] = await Promise.all([statusRes.json(), schemaRes.json()]);
-
-            // Логика обработки
-            const numberMap = {};
-            schemaData.data.forEach(item => {
-                if (item.scheme_type === 'seat' && !numberMap[item.UUID]) {
-                    numberMap[item.UUID] = item.text.trim();
-                }
-            });
-
-            const statusMap = {};
-            statusData.data.forEach(item => statusMap[item.UUID] = item.status);
-
-            const pcs = Object.entries(numberMap).map(([uuid, number]) => ({
-                uuid, number,
-                free: statusMap[uuid] ?? null,
-                isPs: uuid.startsWith('rele_'),
-            }));
-
-            cache = { data: { pcs, ok: true }, expires: Date.now() + CACHE_TTL };
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify(cache.data));
-        } catch (e) {
-            res.statusCode = 502;
-            res.end(JSON.stringify({ ok: false, error: e.message }));
-        }
-    } else {
-        // Отдача статического HTML
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        fs.createReadStream(path.join(__dirname, 'index.html')).pipe(res);
+        res.statusCode = 502;
+        return res.end(JSON.stringify({ ok: false, error: cache.error || 'Статус ещё не получен, попробуйте через несколько секунд', pcs: [] }));
     }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    fs.createReadStream(path.join(__dirname, 'index.html')).pipe(res);
 });
 
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Слушать порт начинаем ДО первого (самого долгого) сбора статуса: сокет
+// сразу встаёт в приём соединений на уровне ОС, и запросы, пришедшие пока
+// идёт синхронный сбор через curl.exe/PowerShell, встают в очередь вместо
+// отказа в соединении.
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+try {
+    auth.ensureAuthenticated();
+} catch (e) {
+    console.error('Внимание: нет активной сессии Langame —', e.message);
+    console.error('Выполните на этой машине: node login.js');
+}
+
+refresh();
+setInterval(refresh, CACHE_TTL);
