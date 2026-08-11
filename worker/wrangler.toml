@@ -2,15 +2,11 @@ name = "avagaming-pc-status"
 main = "src/worker.js"
 compatibility_date = "2025-01-01"
 
-[[vpc_services]]
-binding = "ORIGIN"
-service_id = "019fefcc-6f2b-7d20-a68f-d6268688b2b4"
-
 [assets]
 directory = "./public"
 binding = "ASSETS"
 run_worker_first = true
 
-[[mtls_certificates]]
-binding = "MY_CERT"
-certificate_id = "03d0e9ce-5dde-4ca5-ab6f-5814532216c5"
+[[vpc_services]]
+binding = "ORIGIN"
+service_id = "019fefcc-6f2b-7d20-a68f-d6268688b2b4"
