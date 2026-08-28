@@ -17,12 +17,19 @@ const CACHE_TTL = 15000; // 15 секунд кеша
 // Публичный виджет на Cloudflare Worker (см. worker/) сам стучится сюда через
 // Cloudflare VPC-туннель (ru-ava.local) на каждый запрос гостя — этому серверу
 // самому никуда ничего пушить не нужно, он просто отвечает на /api/status.
-let cache = { club: null, pcs: null, ok: false, error: null, updatedAt: null };
+let cache = { club: null, pcs: null, zoneOrder: [], ok: false, error: null, updatedAt: null };
 
 async function refresh() {
     try {
-        const { club, pcs } = await pcStatus.getStatus();
-        cache = { club, pcs, ok: true, error: null, updatedAt: Date.now() };
+        const { club, pcs, zoneOrder } = await pcStatus.getStatus();
+        cache = {
+            club,
+            pcs,
+            zoneOrder: Array.isArray(zoneOrder) ? zoneOrder : [],
+            ok: true,
+            error: null,
+            updatedAt: Date.now(),
+        };
     } catch (e) {
         console.error('Не удалось обновить статус ПК:', e.message);
         cache = { ...cache, ok: false, error: e.message };

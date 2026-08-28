@@ -8,7 +8,7 @@ const wsStatus = require('./wsStatus');
 // перечитывать и заново парсить ~400 КБ HTML на каждый 15-секундный цикл
 // смысла нет, поэтому кешируем его отдельно и надолго.
 const DIRECTORY_TTL = 5 * 60 * 1000;
-let directoryCache = { club: null, devices: null, expires: 0 };
+let directoryCache = { club: null, devices: null, zoneOrder: null, expires: 0 };
 
 /** Извлекает номер из "PC12" -> 12. Для остального (PS1, ADMIN PC) возвращает null. */
 function extractNumber(name) {
@@ -28,9 +28,14 @@ async function getDirectory() {
   if (directoryCache.devices && Date.now() < directoryCache.expires) {
     return directoryCache;
   }
-  const { club, devices: allDevices } = await directory.fetchDirectory();
+  const { club, devices: allDevices, zoneOrder } = await directory.fetchDirectory();
   const devices = allDevices.filter((d) => !d.isAdmin);
-  directoryCache = { club, devices, expires: Date.now() + DIRECTORY_TTL };
+  directoryCache = {
+    club,
+    devices,
+    zoneOrder: Array.isArray(zoneOrder) ? zoneOrder : [],
+    expires: Date.now() + DIRECTORY_TTL,
+  };
   return directoryCache;
 }
 
@@ -45,7 +50,7 @@ function computeStatus(info) {
 }
 
 async function computeAll() {
-  const { club, devices } = await getDirectory();
+  const { club, devices, zoneOrder } = await getDirectory();
   const live = await wsStatus.fetchLiveStatus(devices.map((d) => d.uuid));
 
   const pcs = devices.map((device) => {
@@ -69,31 +74,32 @@ async function computeAll() {
     };
   });
 
-  return { club, pcs };
+  // Стабильный порядок внутри зоны: по номеру PC, иначе по имени
+  pcs.sort((a, b) => {
+    if (a.number != null && b.number != null) return a.number - b.number;
+    if (a.number != null) return -1;
+    if (b.number != null) return 1;
+    return String(a.name).localeCompare(String(b.name), 'ru');
+  });
+
+  return { club, pcs, zoneOrder: zoneOrder || [] };
 }
 
 /**
  * Итоговый статус клуба:
- *   { club, pcs: [{ uuid, number, name, isPs, zone, status, endsAt }] }
+ *   { club, pcs: [{ uuid, number, name, isPs, zone, status, endsAt }], zoneOrder: string[] }
  *
  * status — 'free' | 'busy' | 'technical' | 'offline' | 'unknown'
- *   ('unknown' — устройство не ответило на опрос за это окно, а не факт занятости)
- * endsAt — время окончания сессии ("ЧЧ:ММ" или служебное значение), только
- *   для status === 'busy'; сколько осталось — считает клиент по своим часам.
- *
- * Требует активной сессии в панели (node login.js) и доступа к клиентскому
- * .p12-сертификату (LANGAME_PFX_PATH) — платформа значения не имеет.
- *
- * Сессию проактивно не проверяем на каждый вызов (это отдельный HTTP-запрос)
- * — только если сам сбор данных упал, тогда пробуем авторизоваться и
- * повторить один раз.
+ * zone — тип ПК из API («Стандарт», «VIP», «Приставки», …) или null
+ * zoneOrder — порядок секций зон (из справочника типов, поле sort)
+ * endsAt — время окончания сессии ("ЧЧ:ММ"), только для status === 'busy'
  */
 async function getStatus() {
   try {
     return await computeAll();
   } catch (e) {
     await auth.ensureAuthenticated();
-    directoryCache = { club: null, devices: null, expires: 0 };
+    directoryCache = { club: null, devices: null, zoneOrder: null, expires: 0 };
     return await computeAll();
   }
 }

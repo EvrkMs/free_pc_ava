@@ -7,6 +7,8 @@
 #   docker compose run --rm langame-status node login.js   # первый вход, интерактивно
 #   docker compose up -d
 
+name: lamgame-status
+
 services:
   langame-status:
     environment:

@@ -1,6 +1,8 @@
 'use strict';
 
 const mtls = require('./mtls');
+const publicApi = require('./publicApi');
+const config = require('./config');
 
 /**
  * Список устройств клуба: UUID, отображаемое имя, признак приставки (реле).
@@ -49,14 +51,11 @@ function parseDirectory(html) {
 }
 
 /**
- * Зона (тип ПК, напр. "Стандарт"/"VIP"/"Эксклюзив") и название клуба —
- * со страницы /client_is_version/ (таблица привязки ПК по типам).
- * Разметка на девайс: <tr data-id="..."> ... data-column="place"><span>КЛУБ</span>
- * ... data-column="UUID"><span>UUID</span> ... data-column="pc_types"><span>ЗОНА</span>
+ * Зона (тип ПК) со страницы /client_is_version/ — fallback, если нет API-ключа.
  */
 function parseZones(html) {
   const tableStart = html.indexOf('id="js-client-is-version-table"');
-  if (tableStart === -1) return { club: null, zoneByUuid: {} };
+  if (tableStart === -1) return { club: null, zoneByUuid: {}, zoneOrder: [] };
 
   const tableEnd = html.indexOf('</table>', tableStart);
   const table = html.slice(tableStart, tableEnd === -1 ? html.length : tableEnd);
@@ -64,6 +63,7 @@ function parseZones(html) {
 
   let club = null;
   const zoneByUuid = {};
+  const seenOrder = [];
 
   for (const row of rows) {
     const uuidMatch = row.match(/data-column="UUID"[\s\S]{0,300}?<span>([^<]*)<\/span>/);
@@ -72,11 +72,41 @@ function parseZones(html) {
 
     if (!club && placeMatch && placeMatch[1].trim()) club = placeMatch[1].trim();
     if (uuidMatch && uuidMatch[1] && zoneMatch && zoneMatch[1].trim()) {
-      zoneByUuid[uuidMatch[1]] = zoneMatch[1].trim();
+      const zone = zoneMatch[1].trim();
+      zoneByUuid[uuidMatch[1]] = zone;
+      if (!seenOrder.includes(zone)) seenOrder.push(zone);
     }
   }
 
-  return { club, zoneByUuid };
+  return { club, zoneByUuid, zoneOrder: seenOrder };
+}
+
+/**
+ * Зоны/типы ПК.
+ * Приоритет: публичный API (X-Request-Token) → HTML-парсинг.
+ */
+async function resolveZones() {
+  if (config.apiKey) {
+    try {
+      const fromApi = await publicApi.fetchZonesFromPublicApi();
+      if (fromApi && fromApi.zoneByUuid && Object.keys(fromApi.zoneByUuid).length > 0) {
+        return fromApi;
+      }
+    } catch (e) {
+      console.warn('Зоны из публичного API недоступны:', e.message);
+    }
+  }
+
+  try {
+    const zonesRes = await mtls.request({ path: '/client_is_version/' });
+    if (zonesRes.status === 200) {
+      return parseZones(zonesRes.body);
+    }
+  } catch {
+    // не критично
+  }
+
+  return { club: null, zoneByUuid: {}, zoneOrder: [], metaByUuid: {} };
 }
 
 async function fetchDirectory() {
@@ -86,25 +116,29 @@ async function fetchDirectory() {
   }
   const devices = parseDirectory(res.body);
   if (devices.length === 0) {
-    throw new Error('На странице /all_clubs_pc/ не найдено ни одного устройства — возможно, изменилась вёрстка панели.');
+    throw new Error(
+      'На странице /all_clubs_pc/ не найдено ни одного устройства — возможно, изменилась вёрстка панели.',
+    );
   }
 
-  // Зоны/название клуба — не критичны для основной функции страницы,
-  // поэтому при сбое просто оставляем список ПК без группировки.
-  let club = null;
-  let zoneByUuid = {};
-  try {
-    const zonesRes = await mtls.request({ path: '/client_is_version/' });
-    if (zonesRes.status === 200) ({ club, zoneByUuid } = parseZones(zonesRes.body));
-  } catch {
-    // не критично — см. комментарий выше
-  }
+  const { club, zoneByUuid, zoneOrder = [], metaByUuid = {} } = await resolveZones();
 
   for (const device of devices) {
-    device.zone = zoneByUuid[device.uuid] || (device.isPs ? 'Приставки' : null);
+    const meta = metaByUuid[device.uuid];
+    if (meta) {
+      if (meta.isPs) device.isPs = true;
+      // имя из API — только если HTML не дал нормального
+      if (meta.name && (!device.name || device.name === device.uuid)) {
+        device.name = meta.name;
+      }
+    }
+
+    device.zone =
+      zoneByUuid[device.uuid] ||
+      (device.isPs ? 'Приставки' : null);
   }
 
-  return { club, devices };
+  return { club, devices, zoneOrder };
 }
 
 module.exports = { fetchDirectory, parseDirectory, parseZones };

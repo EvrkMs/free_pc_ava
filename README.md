@@ -11,11 +11,14 @@
 
 ## Как это работает
 
-1. `login.js` (или `LANGAME_LOGIN`/`LANGAME_PASSWORD` в `.env`) один раз логинится в панель, сессия (`PHPSESSID`) сохраняется в `.session/cookies.txt`.
+1. `login.js` (или `LANGAME_LOGIN`/`LANGAME_PASSWORD` в `.env`) один раз логинится в панель, сессия (`PHPSESSID`) сохраняется в `.session/cookies.json`.
 2. Локальный сервер (`src/index.js`, порт 3000) каждые 15 секунд:
-   - берёт список устройств клуба и их зоны/типы из HTML-страниц админки (`directory.js`, кэш 5 минут — справочник почти не меняется);
-   - опрашивает живой статус каждого UUID через WS (`wsStatus.js` → `wsStatus.ps1`);
-   - считает итоговый статус на устройство: `free` / `busy` / `technical` / `offline` / `unknown`, и для занятых — время окончания сессии.
+   - берёт список устройств клуба из HTML `/all_clubs_pc/` (`directory.js`, кэш 5 минут);
+   - зоны/типы ПК — из публичного API (`LANGAME_API_KEY` → `X-Request-Token`):
+     `/public_api/global/linking_pc_by_type/list` + `/public_api/global/types_of_pc_in_clubs/list`
+     (без mTLS; при отсутствии ключа — fallback на HTML `/client_is_version/`);
+   - опрашивает живой статус каждого UUID через WS (`wsStatus.js`);
+   - считает итоговый статус на устройство: `free` / `busy` / `technical` / `offline` / `unknown`, и для занятых — время окончания сессии;
    - отдаёт всё как JSON на `/api/status` (плюс простую HTML-страницу).
 3. Если сессия протухла — сервер сам логинится заново (при наличии `LANGAME_LOGIN`/`LANGAME_PASSWORD`), иначе просит выполнить `node login.js` вручную.
 
@@ -28,7 +31,11 @@
 Локальный сервер (на машине клуба, где стоит сертификат):
 
 ```bash
-cp .env.example .env      # опционально: логин/пароль для автологина
+cp .env.example .env
+# в .env:
+#   LANGAME_LOGIN / LANGAME_PASSWORD — автологин при протухшей сессии
+#   LANGAME_API_KEY — Standalone ключ (X-Request-Token) для зон/типов ПК
+#   LANGAME_PFX_PASSPHRASE — если .p12 с паролем
 node login.js             # первый вход в панель
 npm start                 # или start.bat
 ```
