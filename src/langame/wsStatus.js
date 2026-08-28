@@ -1,89 +1,117 @@
 'use strict';
 
-const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
+const WebSocket = require('ws');
 
 const config = require('./config');
-const { certRef } = require('./mtls');
-
-const SCRIPT_PATH = path.join(__dirname, 'wsStatus.ps1');
+const { getTlsOptions, cookieHeader } = require('./mtls');
 
 /**
  * Живой статус устройств идёт только через WebSocket панели (wss:///wss/) —
  * обычный HTTP-запрос отдаёт пустой шаблон, значения дорисовывает браузер
- * после обмена с сокетом. Подключаемся через .NET ClientWebSocket в
- * PowerShell: он умеет использовать клиентский сертификат прямо из
- * хранилища Windows (как и curl.exe в mtls.js), но, в отличие от curl,
- * нормально держит двусторонний WS-обмен.
+ * после обмена с сокетом. Подключаемся напрямую пакетом `ws`, передавая тот
+ * же клиентский PKCS#12-сертификат, что и в mtls.js (заменяет прежний
+ * .NET ClientWebSocket из PowerShell).
  *
  * Для каждого UUID отправляем `command_api showConfig` и слушаем ответы —
  * так делает сама панель (см. send2WSall() в её HTML).
+ *
+ * В отличие от PowerShell 5.1 (у которого ConvertFrom-Json падал на ключах,
+ * различающихся только регистром, из-за чего пришлось вытаскивать поля
+ * точечными регексами), обычный JSON.parse в Node такой проблемы не имеет —
+ * разбираем ответ панели целиком.
  */
-const HTTP_ONLY_PREFIX = '#HttpOnly_';
 
-function readPhpSessId(host) {
-  const jar = fs.readFileSync(config.cookieJar, 'utf8');
-
-  for (const rawLine of jar.split('\n')) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    // curl помечает HttpOnly-куки строкой вида "#HttpOnly_<domain>\t...", а
-    // PHPSESSID почти всегда HttpOnly — просто пропускать все строки с "#"
-    // (как выглядят обычные комментарии jar-файла) означает никогда не найти
-    // такую куку.
-    if (line.startsWith('#') && !line.startsWith(HTTP_ONLY_PREFIX)) continue;
-    const cleaned = line.startsWith(HTTP_ONLY_PREFIX) ? line.slice(HTTP_ONLY_PREFIX.length) : line;
-
-    const cols = cleaned.split('\t');
-    if (cols.length < 7) continue;
-    const [domain, , , , , name, value] = cols;
-    if (name === 'PHPSESSID' && domain.replace(/^\./, '') === host) {
-      return value;
-    }
-  }
-
-  throw new Error('PHPSESSID не найден в cookie-jar — нужен вход (node login.js).');
-}
-
-/** Отпечаток сертификата из ссылки вида "CurrentUser\MY\<отпечаток>" (в любом формате разделителей). */
-function extractThumbprint(certRefValue) {
-  const hex = certRefValue.match(/[0-9A-Fa-f]{40}/);
-  if (hex) return hex[0];
-  return certRefValue.replace(/^.*[\\/]/, '');
+function randomId(len = 24) {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
 }
 
 function fetchLiveStatus(uuids, { timeoutMs = 15000 } = {}) {
-  const baseHost = config.baseUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  const phpSessId = readPhpSessId(baseHost);
+  return new Promise((resolve, reject) => {
+    if (uuids.length === 0) {
+      resolve({});
+      return;
+    }
 
-  const res = spawnSync('powershell.exe', [
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PATH,
-    '-Thumbprint', extractThumbprint(certRef()),
-    '-PHPSESSID', phpSessId,
-    '-BaseHost', baseHost,
-    '-UuidsJson', JSON.stringify(uuids),
-    '-TimeoutMs', String(timeoutMs),
-  ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs + 15000 });
+    const host = config.baseUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    const cookie = cookieHeader();
+    const sessMatch = cookie.match(/PHPSESSID=([^;]+)/);
+    if (!sessMatch) {
+      reject(new Error('PHPSESSID не найден — нужен вход (node login.js).'));
+      return;
+    }
+    const sessionId = `${sessMatch[1]}_${randomId()}`;
 
-  if (res.error) throw res.error;
-  if (res.status !== 0) {
-    throw new Error('wsStatus.ps1 завершился с ошибкой: ' + (res.stderr || '').trim());
-  }
+    let ws;
+    try {
+      ws = new WebSocket(`wss://${host}/wss/?client_guid=${sessionId}&type_client=browser`, {
+        ...getTlsOptions(),
+        headers: { Cookie: cookie, Origin: `https://${host}` },
+        handshakeTimeout: 8000,
+      });
+    } catch (e) {
+      reject(e);
+      return;
+    }
 
-  let list;
-  try {
-    list = JSON.parse(res.stdout || '[]');
-  } catch {
-    throw new Error('wsStatus.ps1 вернул не-JSON: ' + (res.stdout || '').slice(0, 300));
-  }
-  if (!Array.isArray(list)) list = [list];
+    const results = {};
+    let settled = false;
+    const deadline = setTimeout(finish, timeoutMs);
 
-  const byUuid = {};
-  for (const item of list) {
-    if (item && item.UUID) byUuid[item.UUID] = item;
-  }
-  return byUuid;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try {
+        ws.close();
+      } catch {
+        // сокет уже мог закрыться сам — не критично
+      }
+      resolve(results);
+    }
+
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      reject(err);
+    }
+
+    ws.on('open', () => {
+      uuids.forEach((uuid, i) => {
+        setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          ws.send(
+            JSON.stringify({
+              client_guid: uuid,
+              type: 'command_api',
+              command: 'showConfig',
+              who_send: sessionId,
+              need_return: true,
+            }),
+          );
+        }, i * 200);
+      });
+    });
+
+    ws.on('message', (data) => {
+      let msg;
+      try {
+        msg = JSON.parse(data.toString('utf8'));
+      } catch {
+        return;
+      }
+      if (msg && msg.UUID) {
+        results[msg.UUID] = msg;
+        if (Object.keys(results).length >= uuids.length) finish();
+      }
+    });
+
+    ws.on('error', (err) => fail(err));
+    ws.on('close', () => finish());
+  });
 }
 
 module.exports = { fetchLiveStatus };

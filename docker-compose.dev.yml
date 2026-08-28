@@ -1,0 +1,20 @@
+# Локальная разработка публичного виджета (Cloudflare Worker).
+# Не требует mTLS-сертификата и работает на обычном Linux-докере.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#   -> http://localhost:8787
+#
+# /api/status без `--remote` и реального VPC Service вернёт ошибку —
+# это ожидаемо, годится только для проверки статики/CORS/раздачи.
+
+services:
+  worker-dev:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.dev
+    image: free-pc-ava-worker:dev
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./worker/public:/app/public
+      - ./worker/src:/app/src

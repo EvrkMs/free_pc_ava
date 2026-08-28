@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Вход в панель Langame (226.langame.ru) с этой машины.
+ * Вход в панель Langame (226.langame.ru).
  *
  *   node login.js            вход (спросит логин и пароль)
  *   node login.js --check    проверить, жива ли сохранённая сессия
@@ -11,16 +11,13 @@
  * Логин/пароль можно передать через переменные окружения
  * LANGAME_LOGIN / LANGAME_PASSWORD — тогда вопросов не будет.
  *
- * Работает только на этой Windows-машине: сертификат клиента лежит
- * в Cert:\CurrentUser\My и не экспортируется, curl.exe обращается
- * к нему через Schannel/CNG.
+ * Требуется клиентский сертификат в формате PKCS#12 (.p12/.pfx) —
+ * путь задаётся LANGAME_PFX_PATH (пароль от него — LANGAME_PFX_PASSPHRASE).
  */
 
 const readline = require('node:readline');
 const config = require('./src/langame/config');
 const auth = require('./src/langame/auth');
-const mtls = require('./src/langame/mtls');
-const { listCandidates } = require('./src/langame/cert');
 
 function ask(question, { hidden = false } = {}) {
   return new Promise((resolve) => {
@@ -45,17 +42,6 @@ function ask(question, { hidden = false } = {}) {
   });
 }
 
-function printCert() {
-  const ref = mtls.certRef();
-  console.log(`Сертификат : ${ref}`);
-  const info = listCandidates().find((c) => ref.endsWith(c.Thumbprint));
-  if (info) {
-    console.log(`             ${info.Subject}`);
-    console.log(`             действует до ${new Date(info.NotAfter).toLocaleDateString('ru-RU')}`);
-  }
-  console.log(`Панель     : ${config.baseUrl}`);
-}
-
 async function main() {
   const args = process.argv.slice(2);
 
@@ -65,10 +51,11 @@ async function main() {
     return;
   }
 
-  printCert();
+  console.log(`Сертификат : ${config.pfxPath}`);
+  console.log(`Панель     : ${config.baseUrl}`);
 
   if (args.includes('--check')) {
-    const ok = auth.isAuthenticated();
+    const ok = await auth.isAuthenticated();
     console.log(ok ? '\nСессия активна.' : '\nСессия не активна — нужен вход.');
     process.exitCode = ok ? 0 : 1;
     return;
@@ -84,10 +71,10 @@ async function main() {
     return;
   }
 
-  const result = auth.login(userLogin, password);
+  const result = await auth.login(userLogin, password);
 
   if (result.ok) {
-    console.log(`Вход выполнен. Сессия сохранена в ${config.cookieJar}`);
+    console.log(`Вход выполнен. Сессия сохранена в ${config.cookieFile}`);
   } else {
     console.error(`Не удалось войти: ${result.reason}`);
     if (result.location) console.error(`Ответ сервера: ${result.status} -> ${result.location}`);

@@ -79,8 +79,8 @@ function parseZones(html) {
   return { club, zoneByUuid };
 }
 
-function fetchDirectory() {
-  const res = mtls.request({ path: '/all_clubs_pc/' });
+async function fetchDirectory() {
+  const res = await mtls.request({ path: '/all_clubs_pc/' });
   if (res.status !== 200) {
     throw new Error(`Не удалось получить /all_clubs_pc/: HTTP ${res.status}`);
   }
@@ -94,7 +94,7 @@ function fetchDirectory() {
   let club = null;
   let zoneByUuid = {};
   try {
-    const zonesRes = mtls.request({ path: '/client_is_version/' });
+    const zonesRes = await mtls.request({ path: '/client_is_version/' });
     if (zonesRes.status === 200) ({ club, zoneByUuid } = parseZones(zonesRes.body));
   } catch {
     // не критично — см. комментарий выше

@@ -24,11 +24,11 @@ function toBool(v) {
   return Number.isFinite(n) ? n !== 0 : false;
 }
 
-function getDirectory() {
+async function getDirectory() {
   if (directoryCache.devices && Date.now() < directoryCache.expires) {
     return directoryCache;
   }
-  const { club, devices: allDevices } = directory.fetchDirectory();
+  const { club, devices: allDevices } = await directory.fetchDirectory();
   const devices = allDevices.filter((d) => !d.isAdmin);
   directoryCache = { club, devices, expires: Date.now() + DIRECTORY_TTL };
   return directoryCache;
@@ -44,9 +44,9 @@ function computeStatus(info) {
   return 'unknown';
 }
 
-function computeAll() {
-  const { club, devices } = getDirectory();
-  const live = wsStatus.fetchLiveStatus(devices.map((d) => d.uuid));
+async function computeAll() {
+  const { club, devices } = await getDirectory();
+  const live = await wsStatus.fetchLiveStatus(devices.map((d) => d.uuid));
 
   const pcs = devices.map((device) => {
     const info = live[device.uuid] || null;
@@ -81,20 +81,20 @@ function computeAll() {
  * endsAt — время окончания сессии ("ЧЧ:ММ" или служебное значение), только
  *   для status === 'busy'; сколько осталось — считает клиент по своим часам.
  *
- * Требует активной сессии в панели (node login.js) и работает только на
- * этой Windows-машине — сертификат клуба не экспортируется из хранилища.
+ * Требует активной сессии в панели (node login.js) и доступа к клиентскому
+ * .p12-сертификату (LANGAME_PFX_PATH) — платформа значения не имеет.
  *
- * Сессию проактивно не проверяем на каждый вызов (это отдельный HTTP-запрос
- * через curl.exe) — только если сам сбор данных упал, тогда пробуем
- * авторизоваться и повторить один раз.
+ * Сессию проактивно не проверяем на каждый вызов (это отдельный HTTP-запрос)
+ * — только если сам сбор данных упал, тогда пробуем авторизоваться и
+ * повторить один раз.
  */
-function getStatus() {
+async function getStatus() {
   try {
-    return computeAll();
+    return await computeAll();
   } catch (e) {
-    auth.ensureAuthenticated();
+    await auth.ensureAuthenticated();
     directoryCache = { club: null, devices: null, expires: 0 };
-    return computeAll();
+    return await computeAll();
   }
 }
 

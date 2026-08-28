@@ -1,63 +1,86 @@
 'use strict';
 
-const { spawnSync } = require('node:child_process');
+const https = require('node:https');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const crypto = require('node:crypto');
+const { URL } = require('node:url');
 
 const config = require('./config');
-const { resolveCertRef } = require('./cert');
 
 /**
- * HTTP-транспорт поверх curl.exe (сборка со Schannel).
+ * HTTP-транспорт на встроенном https-модуле Node.js с клиентским
+ * TLS-сертификатом в формате PKCS#12 (.p12/.pfx).
  *
- * Почему не встроенный в Node https: приватный ключ сертификата помечен
- * non-exportable, вытащить его в pem/pfx нельзя в принципе. Только
- * Schannel/CNG умеет подписать TLS handshake, не отдавая ключ наружу.
- * curl.exe со Schannel это умеет через ссылку вида `CurrentUser\MY\<отпечаток>`
- * — ключ так и остаётся в хранилище Windows. Поэтому весь этот модуль
- * (и, соответственно, авторизация к 226.langame.ru) работает только на
- * Windows-машине, где сертификат установлен — не в Linux-контейнере.
+ * Заменяет прежний транспорт через curl.exe + Schannel/Windows Cert Store.
+ * Кросс-платформенно: сертификат читается из файла, приватный ключ никуда
+ * не уходит из процесса (и не покидает контейнер, если .p12 не смонтирован
+ * снаружи, а запечён в образ — см. DOCKER.md).
  */
 
-let cachedCertRef = null;
-
-function certRef() {
-  if (!cachedCertRef) cachedCertRef = resolveCertRef();
-  return cachedCertRef;
+let pfxBuffer = null;
+function loadPfx() {
+  if (pfxBuffer) return pfxBuffer;
+  if (!fs.existsSync(config.pfxPath)) {
+    throw new Error(
+      `Сертификат не найден: ${config.pfxPath}\n` +
+        'Задайте LANGAME_PFX_PATH или положите файл по этому пути.',
+    );
+  }
+  pfxBuffer = fs.readFileSync(config.pfxPath);
+  return pfxBuffer;
 }
 
-function ensureJar() {
+/** TLS-опции для клиентского сертификата — переиспользуются в wsStatus.js для WebSocket. */
+function getTlsOptions() {
+  return { pfx: loadPfx(), passphrase: config.pfxPassphrase };
+}
+
+let agent = null;
+function getAgent() {
+  if (!agent) {
+    agent = new https.Agent({ ...getTlsOptions(), keepAlive: true });
+  }
+  return agent;
+}
+
+function ensureStore() {
   fs.mkdirSync(config.sessionDir, { recursive: true });
-  if (!fs.existsSync(config.cookieJar)) {
-    fs.writeFileSync(config.cookieJar, '# Netscape HTTP Cookie File\n', 'utf8');
+  if (!fs.existsSync(config.cookieFile)) {
+    fs.writeFileSync(config.cookieFile, '{}', 'utf8');
   }
-  return config.cookieJar;
 }
 
-/** Из дампа заголовков берём последний HTTP-ответ (перед ним может быть 200 от CONNECT прокси). */
-function parseHeaderDump(dump) {
-  const blocks = dump
-    .split(/\r?\n\r?\n/)
-    .map((b) => b.trim())
-    .filter((b) => /^HTTP\//i.test(b));
-
-  const last = blocks[blocks.length - 1] || '';
-  const lines = last.split(/\r?\n/);
-  const statusLine = lines.shift() || '';
-  const status = Number((statusLine.match(/^HTTP\/[\d.]+\s+(\d{3})/i) || [])[1] || 0);
-
-  const headers = {};
-  for (const line of lines) {
-    const idx = line.indexOf(':');
-    if (idx === -1) continue;
-    const name = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    headers[name] = headers[name] ? headers[name] + ', ' + value : value;
+function loadCookies() {
+  ensureStore();
+  try {
+    return JSON.parse(fs.readFileSync(config.cookieFile, 'utf8'));
+  } catch {
+    return {};
   }
+}
 
-  return { status, headers, statusLine };
+function saveCookies(cookies) {
+  fs.writeFileSync(config.cookieFile, JSON.stringify(cookies), 'utf8');
+}
+
+function applySetCookie(setCookieHeader) {
+  if (!setCookieHeader) return;
+  const cookies = loadCookies();
+  const list = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+  for (const raw of list) {
+    const pair = raw.split(';')[0];
+    const idx = pair.indexOf('=');
+    if (idx === -1) continue;
+    cookies[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+  }
+  saveCookies(cookies);
+}
+
+/** Собранный Cookie-заголовок из локального cookie-store (см. cookieFile). */
+function cookieHeader() {
+  const cookies = loadCookies();
+  return Object.entries(cookies)
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ');
 }
 
 /**
@@ -66,81 +89,59 @@ function parseHeaderDump(dump) {
  * @param {object} opts
  * @param {string} opts.path путь вида '/auth.php' или полный URL
  * @param {string} [opts.method] GET по умолчанию
- * @param {string} [opts.body] тело запроса; передаётся через stdin
+ * @param {string} [opts.body] тело запроса
  * @param {object} [opts.headers]
- * @returns {{status:number, headers:object, body:string, location:(string|null)}}
+ * @returns {Promise<{status:number, headers:object, body:string, location:(string|null)}>}
  */
 function request(opts) {
-  const {
-    path: reqPath,
-    method = 'GET',
-    body = null,
-    headers = {},
-  } = opts;
+  const { path: reqPath, method = 'GET', body = null, headers = {} } = opts;
+  const url = new URL(/^https?:\/\//i.test(reqPath) ? reqPath : config.baseUrl + reqPath);
 
-  const url = /^https?:\/\//i.test(reqPath) ? reqPath : config.baseUrl + reqPath;
-  const jar = ensureJar();
-  const headerFile = path.join(
-    os.tmpdir(),
-    'freepc-hdr-' + crypto.randomBytes(8).toString('hex') + '.txt',
-  );
-
-  const args = [
-    '--silent',
-    '--show-error',
-    '--globoff',
-    '--cert', certRef(),
-    '--cookie', jar,
-    '--cookie-jar', jar,
-    '--max-time', String(config.timeout),
-    '--dump-header', headerFile,
-    '--request', method,
-  ];
-
-  for (const [name, value] of Object.entries(headers)) {
-    args.push('--header', `${name}: ${value}`);
-  }
-
+  const reqHeaders = { ...headers };
+  const cookie = cookieHeader();
+  if (cookie) reqHeaders.Cookie = cookie;
   if (body !== null) {
-    if (!headers['Content-Type'] && !headers['content-type']) {
-      args.push('--header', 'Content-Type: application/x-www-form-urlencoded');
+    if (!reqHeaders['Content-Type'] && !reqHeaders['content-type']) {
+      reqHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
     }
-    args.push('--data-binary', '@-');
+    reqHeaders['Content-Length'] = Buffer.byteLength(body);
   }
 
-  args.push(url);
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        agent: getAgent(),
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method,
+        headers: reqHeaders,
+        timeout: config.timeout * 1000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          applySetCookie(res.headers['set-cookie']);
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString('utf8'),
+            location: res.headers.location || null,
+          });
+        });
+      },
+    );
 
-  try {
-    const res = spawnSync('curl.exe', args, {
-      input: body === null ? undefined : body,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      windowsHide: true,
-    });
-
-    if (res.error) throw res.error;
-    if (res.status !== 0) {
-      throw new Error(
-        `curl завершился с кодом ${res.status}: ${(res.stderr || '').trim() || 'нет вывода'}`,
-      );
-    }
-
-    const dump = fs.existsSync(headerFile) ? fs.readFileSync(headerFile, 'utf8') : '';
-    const { status, headers: respHeaders } = parseHeaderDump(dump);
-
-    return {
-      status,
-      headers: respHeaders,
-      body: res.stdout || '',
-      location: respHeaders.location || null,
-    };
-  } finally {
-    fs.rmSync(headerFile, { force: true });
-  }
+    req.on('timeout', () => req.destroy(new Error(`Таймаут запроса (${config.timeout}s)`)));
+    req.on('error', reject);
+    if (body !== null) req.write(body);
+    req.end();
+  });
 }
 
 function clearSession() {
-  fs.rmSync(config.cookieJar, { force: true });
+  fs.rmSync(config.cookieFile, { force: true });
 }
 
-module.exports = { request, clearSession, certRef };
+module.exports = { request, clearSession, getTlsOptions, cookieHeader };

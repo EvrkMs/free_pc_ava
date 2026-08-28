@@ -1,0 +1,21 @@
+# Только для локальной разработки виджета/прокси-логики воркера.
+# Сертификат Langame здесь не нужен — worker/src/worker.js только
+# раздаёт статику и проксирует запрос через привязку env.ORIGIN.
+FROM node:20-alpine
+
+WORKDIR /app
+
+RUN npm install -g wrangler@3
+
+COPY public ./public
+COPY src ./src
+COPY wrangler.toml ./
+
+EXPOSE 8787
+
+# --ip 0.0.0.0 — чтобы порт был доступен снаружи контейнера.
+# vpc_services (ORIGIN) в чистом `wrangler dev` не эмулируется — реальный
+# ответ /api/status здесь не получить без `--remote` и настоящего VPC
+# Service в аккаунте Cloudflare. Для проверки статики/CORS-логики этого
+# достаточно.
+CMD ["wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787"]

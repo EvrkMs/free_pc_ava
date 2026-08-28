@@ -5,20 +5,21 @@ const path = require('node:path');
 /**
  * Настройки подключения к панели Langame.
  *
- * Ничего секретного здесь нет и быть не должно:
- * - отпечаток сертификата — публичный идентификатор, не секрет;
- * - приватный ключ живёт в хранилище Windows (CNG) и помечен non-exportable,
- *   наружу он не выходит никогда;
- * - логин/пароль берутся только из переменных окружения, в коде их нет.
+ * Ничего секретного в этом файле нет:
+ * - LANGAME_PFX_PATH — путь к клиентскому сертификату (PKCS#12, .p12/.pfx);
+ * - LANGAME_PFX_PASSPHRASE — пароль от него, только из переменных окружения;
+ * - логин/пароль от панели — тоже только из переменных окружения.
  */
 const config = {
   baseUrl: process.env.LANGAME_BASE_URL || 'https://226.langame.ru',
 
-  /** Ссылка на сертификат в формате curl/Schannel: CurrentUser\MY\<отпечаток>. */
-  certRef: process.env.LANGAME_CERT_REF || null,
+  /** Путь к клиентскому сертификату в формате PKCS#12 (.p12/.pfx). */
+  pfxPath:
+    process.env.LANGAME_PFX_PATH ||
+    path.join(__dirname, '..', '..', 'secrets', 'langame.p12'),
 
-  /** CN издателя, по которому ищем сертификат при автоопределении. */
-  certIssuerMatch: process.env.LANGAME_CERT_ISSUER || 'langame.ru',
+  /** Пароль от .p12-файла (пустая строка, если сертификат без пароля). */
+  pfxPassphrase: process.env.LANGAME_PFX_PASSPHRASE || '',
 
   /** Логин/пароль для автоматического входа при протухшей сессии. */
   login: process.env.LANGAME_LOGIN || null,
@@ -26,12 +27,12 @@ const config = {
 
   lang: process.env.LANGAME_LANG || 'ru',
 
-  /** Куда складывать cookie-jar с PHPSESSID. */
+  /** Куда складывать cookie-store с PHPSESSID. */
   sessionDir: path.join(__dirname, '..', '..', '.session'),
 
   timeout: Number(process.env.LANGAME_TIMEOUT || 30),
 };
 
-config.cookieJar = path.join(config.sessionDir, 'cookies.txt');
+config.cookieFile = path.join(config.sessionDir, 'cookies.json');
 
 module.exports = config;

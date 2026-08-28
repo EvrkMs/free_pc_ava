@@ -25,8 +25,8 @@ function encodeReturnPath(pathname) {
   return Buffer.from(pathname, 'utf8').toString('base64');
 }
 
-function startSession() {
-  const res = mtls.request({ path: '/auth.php' });
+async function startSession() {
+  const res = await mtls.request({ path: '/auth.php' });
   if (res.status !== 200) {
     throw new Error(
       `Форма авторизации недоступна: HTTP ${res.status}. ` +
@@ -38,7 +38,7 @@ function startSession() {
   return res;
 }
 
-function submitLoginForm(login, password, opts = {}) {
+async function submitLoginForm(login, password, opts = {}) {
   const returnPath = opts.returnPath || '/';
 
   const form = new URLSearchParams();
@@ -47,7 +47,7 @@ function submitLoginForm(login, password, opts = {}) {
   form.set('r', encodeReturnPath(returnPath));
   form.set('lang', config.lang);
 
-  const res = mtls.request({
+  const res = await mtls.request({
     path: '/auth.php',
     method: 'POST',
     body: form.toString(),
@@ -76,8 +76,8 @@ function submitLoginForm(login, password, opts = {}) {
 }
 
 /** Живая ли сессия: авторизованный GET / отдаёт 200, неавторизованный — 302 на auth.php. */
-function isAuthenticated() {
-  const res = mtls.request({ path: '/' });
+async function isAuthenticated() {
+  const res = await mtls.request({ path: '/' });
   if (res.status === 302 || res.status === 303) {
     return !/auth\.php/.test(res.location || '');
   }
@@ -85,13 +85,13 @@ function isAuthenticated() {
 }
 
 /** Полный вход: свежая сессия -> отправка формы -> проверка. Пароль нигде не сохраняется. */
-function login(userLogin, password, opts = {}) {
-  startSession();
+async function login(userLogin, password, opts = {}) {
+  await startSession();
 
-  const submitted = submitLoginForm(userLogin, password, opts);
+  const submitted = await submitLoginForm(userLogin, password, opts);
   if (!submitted.ok) return submitted;
 
-  if (!isAuthenticated()) {
+  if (!(await isAuthenticated())) {
     return {
       ok: false,
       status: submitted.status,
@@ -112,8 +112,8 @@ function logout() {
  * Если нет — логинится данными из LANGAME_LOGIN/LANGAME_PASSWORD (env).
  * Бросает исключение, если сессии нет и данных для входа тоже нет.
  */
-function ensureAuthenticated() {
-  if (isAuthenticated()) return;
+async function ensureAuthenticated() {
+  if (await isAuthenticated()) return;
 
   if (!config.login || !config.password) {
     throw new Error(
@@ -122,7 +122,7 @@ function ensureAuthenticated() {
     );
   }
 
-  const result = login(config.login, config.password);
+  const result = await login(config.login, config.password);
   if (!result.ok) {
     throw new Error('Не удалось войти в Langame: ' + result.reason);
   }
