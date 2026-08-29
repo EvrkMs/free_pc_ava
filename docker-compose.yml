@@ -19,8 +19,6 @@ services:
     image: free-pc-ava
     env_file:
       - .env
-    ports:
-      - "3000:3000"
     volumes:
       # Сессия (.session/cookies.json) переживает пересоздание контейнера,
       # чтобы не логиниться заново на каждый деплой.
