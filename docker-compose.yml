@@ -1,11 +1,14 @@
 # Перед первым запуском:
-#   1. положить сертификат в ./secrets/langame.p12
+#   1. положить сертификат в ./secrets/ и указать его в LANGAME_PFX_PATH
 #   2. заполнить .env (см. .env.example): LANGAME_LOGIN, LANGAME_PASSWORD,
 #      LANGAME_PFX_PASSPHRASE
 #
 #   docker compose build
 #   docker compose run --rm langame-status node login.js   # первый вход, интерактивно
 #   docker compose up -d
+#
+# Наружу сервис публикует caddy-docker-proxy по labels ниже: нужна внешняя
+# docker-сеть caddy и A-запись домена на этот сервер.
 
 name: lamgame-status
 
@@ -23,20 +26,22 @@ services:
       # Сессия (.session/cookies.json) переживает пересоздание контейнера,
       # чтобы не логиниться заново на каждый деплой.
       - session-data:/app/.session
+      # Сертификат панели: файл выбирает LANGAME_PFX_PATH из .env.
+      - ./secrets:/app/secrets:ro
     restart: unless-stopped
-    networks: [internal]
+    # tini под PID 1: передаёт сигналы node и собирает зомби-процессы.
+    init: true
+    networks: [caddy]
+    # caddy-docker-proxy: HTTPS-сертификат и проксирование на порт 3000.
+    labels:
+      caddy: free-pc.ava-kk.ru
+      caddy.reverse_proxy: "{{upstreams 3000}}"
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?токен туннеля из Zero Trust dashboard}
-    depends_on: [langame-status]
-    restart: unless-stopped
-    networks: [internal]
-    
 volumes:
   session-data:
 
 networks:
-  internal:
+  # Общая сеть с контейнером caddy-docker-proxy (создаётся снаружи).
+  caddy:
+    external: true
+    name: ${CADDY_NETWORK:-caddy}

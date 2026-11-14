@@ -1,73 +1,50 @@
-# Docker для free_pc_ava (backend)
+# Docker для free_pc_ava
 
-## Что изменилось
+Образ собран на `node:20-alpine`. Сертификат панели (PKCS#12) Node читает из файла: `https.Agent({ pfx, passphrase })` для HTTP и пакет `ws` для WebSocket.
 
-Раньше backend (`src/index.js`) работал только на Windows: авторизация к
-`226.langame.ru` шла через `curl.exe`/`powershell.exe`, обращавшиеся к
-клиентскому mTLS-сертификату в `Cert:\CurrentUser\My`, ключ которого был
-`non-exportable`.
+## Сертификат
 
-Теперь используется клиентский сертификат в формате **PKCS#12 (.p12)**,
-который Node читает напрямую (`https.Agent({ pfx, passphrase })` и пакет
-`ws` для WebSocket-статуса). Windows, curl.exe и PowerShell больше не
-нужны — обычный Linux-образ, обычный `docker compose`.
+Сертификат в образ не копируется: `.dockerignore` исключает `secrets/`. `docker-compose.yml` монтирует папку `./secrets` в `/app/secrets` только для чтения. Файл выбирает переменная `LANGAME_PFX_PATH` из `.env`, например `./secrets/client_id2250.p12`. По умолчанию используется `secrets/langame.p12`.
 
-`worker/` (Cloudflare Worker) этим изменением не затронут — он как деплоился
-через `wrangler deploy` на edge, так и деплоится, сертификат ему не нужен.
+Смена сертификата: положить новый файл в `./secrets`, поправить `LANGAME_PFX_PATH`, выполнить `docker compose up -d`. Пересобирать образ не нужно.
 
-## Сертификат в образе — осознанный компромисс
+## Публикация через Caddy
 
-`Dockerfile` копирует `secrets/langame.p12` прямо в образ (`COPY`). Это
-означает, что приватный ключ остаётся в слоях образа навсегда: даже если
-удалить файл в следующем `RUN`-шаге, слой с ним никуда не денется, и любой
-с доступом к образу (`docker save`, pull из реестра, бэкап) может достать
-ключ обратно.
+Контейнер подключается к внешней docker-сети `caddy` (имя меняется через `CADDY_NETWORK` в `.env`). caddy-docker-proxy читает labels сервиса:
 
-Это приемлемо, только если образ **никогда не покидает эту машину**: не
-пушится в Docker Hub/GHCR/приватный registry, не бэкапится целиком, не
-переносится на другой хост как есть. Если это когда-нибудь перестанет быть
-так — вместо `COPY` в `Dockerfile` нужно перейти на монтирование секрета
-через volume при старте контейнера (`docker-compose.yml` → добавить
-`volumes: - ./secrets/langame.p12:/app/secrets/langame.p12:ro` вместо
-`COPY secrets/langame.p12 ...` в Dockerfile) — тогда секрет не попадает в
-слои образа вообще.
+```yaml
+labels:
+  caddy: free-pc.ava-kk.ru
+  caddy.reverse_proxy: "{{upstreams 3000}}"
+```
+
+Перед запуском нужны:
+- сеть `caddy` и работающий в ней контейнер caddy-docker-proxy;
+- A-запись `free-pc.ava-kk.ru` на IP этого сервера.
 
 ## Запуск
 
 ```bash
-# 1. Положить сертификат
+# 1. Сертификат
 mkdir -p secrets
-cp /путь/к/вашему/langame.p12 secrets/langame.p12
+cp /путь/к/сертификату.p12 secrets/
 
-# 2. Настроить .env
+# 2. Настройки: LANGAME_BASE_URL, LANGAME_PFX_PATH, LANGAME_LOGIN,
+#    LANGAME_PASSWORD, LANGAME_PFX_PASSPHRASE, LANGAME_API_KEY
 cp .env.example .env
-# заполнить LANGAME_LOGIN, LANGAME_PASSWORD, LANGAME_PFX_PASSPHRASE
 
-# 3. Собрать образ
+# 3. Сборка и первый вход (сессия сохраняется в volume session-data)
 docker compose build
-
-# 4. Первый вход (создаёт сессию в volume session-data)
 docker compose run --rm langame-status node login.js
 
-# 5. Запуск
+# 4. Запуск
 docker compose up -d
 ```
 
-Проверить сессию без пересоздания контейнера:
+Проверить сессию в работающем контейнере:
 
 ```bash
 docker compose exec langame-status node login.js --check
 ```
 
-## Локальная разработка виджета (Cloudflare Worker)
-
-Не связана с сертификатом, отдельный compose-файл:
-
-```bash
-docker compose -f docker-compose.dev.yml up --build
-# -> http://localhost:8787
-```
-
-`/api/status` в этом режиме не отвечает по-настоящему — `wrangler dev` без
-`--remote` не эмулирует `vpc_services`-биндинг. Годится для проверки
-статики/CORS.
+`docker stop` завершает контейнер за 1 или 2 секунды: в compose включён `init: true`, а `src/index.js` обрабатывает `SIGTERM`.

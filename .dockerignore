@@ -1,6 +1,6 @@
-.wrangler/
 .git/
 node_modules/
 .env
-worker/
 *.zip
+secrets/
+.session/

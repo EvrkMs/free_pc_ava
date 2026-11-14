@@ -23,7 +23,7 @@ function request(path) {
     );
   }
 
-  const base = (config.baseUrl || 'https://226.langame.ru').replace(/\/$/, '');
+  const base = config.baseUrl;
   const url = new URL(base + '/public_api' + path);
 
   return new Promise((resolve, reject) => {

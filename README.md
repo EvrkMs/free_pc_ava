@@ -1,50 +1,33 @@
 # free_pc_ava
 
-Публичный виджет «занятость зала» для ПК-клуба: сколько ПК свободно/занято и когда заканчивается текущая сессия на каждом. В отличие от [reboot_pc](https://github.com/EvrkMs/reboot_pc), который дёргает документированный публичный API LANGAME, этот проект читает данные из самой веб-панели клуба (`226.langame.ru`) — того же интерфейса, что видит администратор, без открытого API под это.
+Публичная страница «занятость зала» для ПК-клуба: сколько ПК свободно и занято и когда заканчивается сессия на каждом. Проект [reboot_pc](https://github.com/EvrkMs/reboot_pc) работает через публичный API LANGAME. Этот проект читает данные из веб-панели клуба, потому что открытого API для статуса ПК нет.
 
-## Почему так сложно устроено
-
-Панель LANGAME пускает только по клиентскому TLS-сертификату (mTLS), выданному конкретному клубу. Приватный ключ сертификата лежит в хранилище Windows (`Cert:\CurrentUser\My`) с пометкой non-exportable — вытащить его в файл нельзя даже сознательно, поэтому вся эта часть работает только на Windows-машине клуба, где сертификат установлен, и только через инструменты, умеющие обращаться к сертификату по ссылке (Schannel/CNG), а не по самому ключу:
-
-- HTTP — через `curl.exe` (Schannel-сборка), передавая ссылку на сертификат `CurrentUser\MY\<отпечаток>` (`src/langame/mtls.js`).
-- Живой статус ПК панель отдаёт только по WebSocket (`wss:///wss/`) — обычный HTTP отдаёт пустой шаблон, значения дорисовывает браузер после обмена с сокетом. Curl двусторонний WS не тянет, поэтому для этого отдельно запускается PowerShell-скрипт (`wsStatus.ps1`) через `.NET ClientWebSocket`, который тоже умеет забрать сертификат из хранилища.
+Адрес страницы: https://free-pc.ava-kk.ru
 
 ## Как это работает
 
-1. `login.js` (или `LANGAME_LOGIN`/`LANGAME_PASSWORD` в `.env`) один раз логинится в панель, сессия (`PHPSESSID`) сохраняется в `.session/cookies.json`.
-2. Локальный сервер (`src/index.js`, порт 3000) каждые 15 секунд:
-   - берёт список устройств клуба из HTML `/all_clubs_pc/` (`directory.js`, кэш 5 минут);
-   - зоны/типы ПК — из публичного API (`LANGAME_API_KEY` → `X-Request-Token`):
-     `/public_api/global/linking_pc_by_type/list` + `/public_api/global/types_of_pc_in_clubs/list`
-     (без mTLS; при отсутствии ключа — fallback на HTML `/client_is_version/`);
-   - опрашивает живой статус каждого UUID через WS (`wsStatus.js`);
-   - считает итоговый статус на устройство: `free` / `busy` / `technical` / `offline` / `unknown`, и для занятых — время окончания сессии;
-   - отдаёт всё как JSON на `/api/status` (плюс простую HTML-страницу).
-3. Если сессия протухла — сервер сам логинится заново (при наличии `LANGAME_LOGIN`/`LANGAME_PASSWORD`), иначе просит выполнить `node login.js` вручную.
+Панель пускает только с клиентским TLS-сертификатом клуба (mTLS). Сервер читает его из файла PKCS#12 (`secrets/langame.p12`).
 
-## Публичный виджет (Cloudflare Worker)
+1. `login.js` (или `LANGAME_LOGIN`/`LANGAME_PASSWORD` в `.env`) входит в панель. Сессия (`PHPSESSID`) хранится в `.session/cookies.json`.
+2. Сервер (`src/index.js`, порт 3000) раз в 15 секунд:
+   - берёт список устройств из Master API панели (`directory.js`, кэш 5 минут). Токен `MASTER_TOKEN` и id клуба читаются со страницы `/all_clubs_pc/`, затем вызывается `GET /master_api/clients/all_clubs_pc/clubs/{id}/devices`;
+   - берёт зоны (типы ПК) из публичного API по ключу `LANGAME_API_KEY`: `/public_api/global/linking_pc_by_type/list` и `/public_api/global/types_of_pc_in_clubs/list`. Без ключа зоны берутся из HTML `/client_is_version/`;
+   - получает живой статус каждого ПК через WebSocket панели (`wsStatus.js`);
+   - считает статус устройства (`free`, `busy`, `technical`, `offline`, `unknown`) и время окончания сессии;
+   - отдаёт JSON на `/api/status` и страницу `src/index.html` на `/`.
+3. Если сессия истекла, сервер входит заново по `LANGAME_LOGIN`/`LANGAME_PASSWORD`. Без них нужно вручную выполнить `node login.js`.
 
-`worker/` — отдельный Cloudflare Worker: раздаёт статику виджета (`worker/public/`) и проксирует `/api/status` на локальный сервер клуба через Cloudflare Tunnel (VPC Service, `wrangler vpc service`). Сертификат и сессия остаются только на машине клуба — наружу утекают уже готовые данные о занятости, а не доступ к панели.
+Наружу сервис публикует [caddy-docker-proxy](https://github.com/lucaslorentz/caddy-docker-proxy) по labels в `docker-compose.yml`. Caddy сам получает HTTPS-сертификат для домена.
 
 ## Запуск
 
-Локальный сервер (на машине клуба, где стоит сертификат):
+Запуск в Docker описан в [DOCKER.md](DOCKER.md).
+
+Без Docker:
 
 ```bash
-cp .env.example .env
-# в .env:
-#   LANGAME_LOGIN / LANGAME_PASSWORD — автологин при протухшей сессии
-#   LANGAME_API_KEY — Standalone ключ (X-Request-Token) для зон/типов ПК
-#   LANGAME_PFX_PASSPHRASE — если .p12 с паролем
+cp .env.example .env      # заполнить LANGAME_BASE_URL, логин, пароль, ключи
+npm ci
 node login.js             # первый вход в панель
-npm start                 # или start.bat
+npm start                 # http://localhost:3000
 ```
-
-Публичный виджет (Cloudflare):
-
-```bash
-cd worker
-wrangler deploy
-```
-
-`service_id` в `worker/wrangler.toml` должен указывать на VPC Service, настроенный на `http://127.0.0.1:3000` того же клубного хоста.

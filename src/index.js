@@ -13,10 +13,7 @@ const CACHE_TTL = 15000; // 15 секунд кеша
 // чтобы страница показывала последнее известное состояние, а не падала целиком).
 // ok/error/updatedAt отражают РЕЗУЛЬТАТ ПОСЛЕДНЕЙ попытки, поэтому клиент
 // всегда может отличить свежие данные от устаревших после серии ошибок.
-//
-// Публичный виджет на Cloudflare Worker (см. worker/) сам стучится сюда через
-// Cloudflare VPC-туннель (ru-ava.local) на каждый запрос гостя — этому серверу
-// самому никуда ничего пушить не нужно, он просто отвечает на /api/status.
+// Наружу сервер публикует Caddy (см. labels в docker-compose.yml).
 let cache = { club: null, pcs: null, zoneOrder: [], ok: false, error: null, updatedAt: null };
 
 async function refresh() {
@@ -58,6 +55,17 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
+// Node под PID 1 в контейнере игнорирует SIGTERM без обработчика, и
+// `docker stop` ждёт 10 секунд до SIGKILL. Закрываем сервер и выходим сразу.
+function shutdown(signal) {
+    console.log(`${signal}: остановка`);
+    server.close(() => process.exit(0));
+    server.closeAllConnections?.();
+    setTimeout(() => process.exit(0), 2000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 (async () => {
     try {

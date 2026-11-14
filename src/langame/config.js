@@ -12,7 +12,8 @@ const path = require('node:path');
  * - LANGAME_API_KEY — Standalone серверный ключ для публичного API (зоны/типы ПК).
  */
 const config = {
-  baseUrl: process.env.LANGAME_BASE_URL || 'https://226.langame.ru',
+  /** Адрес панели клуба, например https://<номер>.langame.ru. Обязателен. */
+  baseUrl: (process.env.LANGAME_BASE_URL || '').replace(/\/$/, ''),
 
   /** Путь к клиентскому сертификату в формате PKCS#12 (.p12/.pfx). */
   pfxPath:
@@ -42,6 +43,10 @@ const config = {
 
   timeout: Number(process.env.LANGAME_TIMEOUT || 30),
 };
+
+if (!config.baseUrl) {
+  throw new Error('LANGAME_BASE_URL не задан. Укажите адрес панели клуба в .env.');
+}
 
 config.cookieFile = path.join(config.sessionDir, 'cookies.json');
 

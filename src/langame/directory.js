@@ -109,19 +109,123 @@ async function resolveZones() {
   return { club: null, zoneByUuid: {}, zoneOrder: [], metaByUuid: {} };
 }
 
+/**
+ * Параметры Master API со страницы панели: токен, базовый URL и id клуба.
+ * Страница больше не содержит карточек ПК, их рисует /all_clubs_pc/devices.js
+ * из ответа Master API.
+ */
+function parsePageMeta(html) {
+  const meta = (name) => {
+    const m = html.match(new RegExp(`<meta\\s+name="${name}"\\s+content="([^"]*)"`));
+    return m ? m[1] : null;
+  };
+  const clubMatch = html.match(/ALL_CLUBS_PC_CLUB_ID\s*=\s*['"]?(\d+)/);
+  return {
+    token: meta('MASTER_TOKEN'),
+    apiUrl: meta('MASTER_API_URL'),
+    clubId: clubMatch ? clubMatch[1] : null,
+  };
+}
+
+async function masterApiGet(apiUrl, token, uri) {
+  const res = await mtls.request({
+    path: apiUrl.replace(/\/$/, '') + uri,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      Language: config.lang || 'ru',
+    },
+  });
+  if (res.status !== 200) {
+    throw new Error(`Master API ${uri}: HTTP ${res.status}`);
+  }
+  const json = JSON.parse(res.body);
+  if (json.error_code !== undefined && json.error_code !== 0) {
+    throw new Error(`Master API ${uri}: ${json.error_message || 'error_code ' + json.error_code}`);
+  }
+  return json;
+}
+
+/**
+ * Ответ GET /clients/all_clubs_pc/clubs/{id}/devices:
+ *   item.devices[]: { uuid, name, is_ps, ... }
+ *   item.admin_pc: { uuid, name }
+ *   item.terminals[]: { uuid, name } (терминалы оплаты, не места для гостей)
+ */
+function parseDevicesResponse(item) {
+  const devices = [];
+  for (const d of (item && item.devices) || []) {
+    if (!d || !d.uuid) continue;
+    const uuid = String(d.uuid);
+    const name = (d.name || '').trim() || uuid;
+    devices.push({
+      uuid,
+      name,
+      isPs: !!d.is_ps || uuid.startsWith('rele_'),
+      isAdmin: /^admin/i.test(name),
+    });
+  }
+  if (item && item.admin_pc && item.admin_pc.uuid) {
+    devices.push({
+      uuid: String(item.admin_pc.uuid),
+      name: item.admin_pc.name || 'admin',
+      isPs: false,
+      isAdmin: true,
+    });
+  }
+  return devices;
+}
+
+/** Список устройств через Master API (текущая версия панели). */
+async function fetchDevicesFromMasterApi(html) {
+  const { token, apiUrl, clubId: pageClubId } = parsePageMeta(html);
+  if (!token || !apiUrl) {
+    throw new Error('На странице /all_clubs_pc/ нет MASTER_TOKEN или MASTER_API_URL.');
+  }
+
+  let clubId = pageClubId;
+  let clubName = null;
+  try {
+    const clubs = await masterApiGet(apiUrl, token, '/clubs/active');
+    const list = (clubs.items || []).filter((c) => c && c.id && Number(c.id) !== 0);
+    list.sort((a, b) => Number(a.id) - Number(b.id));
+    const current = list.find((c) => String(c.id) === String(clubId)) || list[0];
+    if (current) {
+      clubId = String(current.id);
+      clubName = current.name || null;
+    }
+  } catch (e) {
+    if (!clubId) throw e;
+  }
+  if (!clubId) throw new Error('Не удалось определить id клуба для /all_clubs_pc/.');
+
+  const res = await masterApiGet(
+    apiUrl,
+    token,
+    `/clients/all_clubs_pc/clubs/${encodeURIComponent(clubId)}/devices`,
+  );
+  return { clubName, devices: parseDevicesResponse(res.item) };
+}
+
 async function fetchDirectory() {
   const res = await mtls.request({ path: '/all_clubs_pc/' });
   if (res.status !== 200) {
     throw new Error(`Не удалось получить /all_clubs_pc/: HTTP ${res.status}`);
   }
-  const devices = parseDirectory(res.body);
+
+  // Старая вёрстка с карточками в HTML: оставлена как запасной вариант.
+  let devices = parseDirectory(res.body);
+  let clubName = null;
   if (devices.length === 0) {
-    throw new Error(
-      'На странице /all_clubs_pc/ не найдено ни одного устройства — возможно, изменилась вёрстка панели.',
-    );
+    ({ devices, clubName } = await fetchDevicesFromMasterApi(res.body));
+  }
+  if (devices.length === 0) {
+    throw new Error('Master API /all_clubs_pc/ вернул пустой список устройств.');
   }
 
-  const { club, zoneByUuid, zoneOrder = [], metaByUuid = {} } = await resolveZones();
+  const zones = await resolveZones();
+  const { zoneByUuid, zoneOrder = [], metaByUuid = {} } = zones;
+  const club = zones.club || clubName;
 
   for (const device of devices) {
     const meta = metaByUuid[device.uuid];
@@ -141,4 +245,10 @@ async function fetchDirectory() {
   return { club, devices, zoneOrder };
 }
 
-module.exports = { fetchDirectory, parseDirectory, parseZones };
+module.exports = {
+  fetchDirectory,
+  parseDirectory,
+  parseZones,
+  parsePageMeta,
+  parseDevicesResponse,
+};

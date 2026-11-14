@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Вход в панель Langame (226.langame.ru).
+ * Вход в панель Langame (адрес из LANGAME_BASE_URL).
  *
  *   node login.js            вход (спросит логин и пароль)
  *   node login.js --check    проверить, жива ли сохранённая сессия
