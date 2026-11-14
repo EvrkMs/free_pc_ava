@@ -2,6 +2,24 @@
 
 const path = require('node:path');
 
+const ROOT = path.join(__dirname, '..', '..');
+const SECRETS_DIR = path.join(ROOT, 'secrets');
+
+/**
+ * LANGAME_PFX_PATH:
+ * - пусто: secrets/langame.p12;
+ * - только имя файла (client_id2250.p12): ищется в secrets/;
+ * - относительный путь (./secrets/x.p12): от корня проекта;
+ * - абсолютный путь: как есть.
+ */
+function resolvePfxPath(value) {
+  const v = (value || '').trim();
+  if (!v) return path.join(SECRETS_DIR, 'langame.p12');
+  if (path.isAbsolute(v)) return v;
+  if (!/[\\/]/.test(v)) return path.join(SECRETS_DIR, v);
+  return path.resolve(ROOT, v);
+}
+
 /**
  * Настройки подключения к панели Langame.
  *
@@ -16,9 +34,7 @@ const config = {
   baseUrl: (process.env.LANGAME_BASE_URL || '').replace(/\/$/, ''),
 
   /** Путь к клиентскому сертификату в формате PKCS#12 (.p12/.pfx). */
-  pfxPath:
-    process.env.LANGAME_PFX_PATH ||
-    path.join(__dirname, '..', '..', 'secrets', 'langame.p12'),
+  pfxPath: resolvePfxPath(process.env.LANGAME_PFX_PATH),
 
   /** Пароль от .p12-файла (пустая строка, если сертификат без пароля). */
   pfxPassphrase: process.env.LANGAME_PFX_PASSPHRASE || '',
