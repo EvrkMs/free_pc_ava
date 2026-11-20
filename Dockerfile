@@ -1,6 +1,8 @@
-# Сертификат панели (PKCS#12) в образ не попадает. docker-compose.yml
-# монтирует ./secrets в /app/secrets, а путь к файлу задаёт LANGAME_PFX_PATH
-# из .env (по умолчанию secrets/langame.p12).
+# Сертификат панели (PKCS#12) копируется в образ вместе с папкой secrets/.
+# Файл выбирает LANGAME_PFX_PATH из .env (по умолчанию secrets/langame.p12).
+#
+# Приватный ключ остаётся в слоях образа. Образ нельзя пушить в реестр
+# и переносить на другой хост (см. DOCKER.md).
 FROM node:20-alpine
 
 WORKDIR /app

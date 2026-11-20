@@ -1,5 +1,6 @@
 # Перед первым запуском:
-#   1. положить сертификат в ./secrets/ и указать его в LANGAME_PFX_PATH
+#   1. положить сертификат в ./secrets/ (копируется в образ при сборке)
+#      и указать имя файла в LANGAME_PFX_PATH
 #   2. заполнить .env (см. .env.example): LANGAME_LOGIN, LANGAME_PASSWORD,
 #      LANGAME_PFX_PASSPHRASE
 #
@@ -26,8 +27,6 @@ services:
       # Сессия (.session/cookies.json) переживает пересоздание контейнера,
       # чтобы не логиниться заново на каждый деплой.
       - session-data:/app/.session
-      # Сертификат панели: файл выбирает LANGAME_PFX_PATH из .env.
-      - ./secrets:/app/secrets:ro
     restart: unless-stopped
     # tini под PID 1: передаёт сигналы node и собирает зомби-процессы.
     init: true
